@@ -4,13 +4,18 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // WAJIB: Aktifkan CORS agar Next.js bisa berkomunikasi
+  // 1. MASALAH CORS: Tentukan domain spesifik jika pakai credentials: true
   app.enableCors({
-    origin: '*', 
+    origin: [
+      'https://gerejapintar.id', // Domain frontend kamu
+      'http://localhost:3000'    // Biar tetep bisa ditest di laptop sendiri
+    ], 
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
 
-  await app.listen(3000);
+  // 2. MASALAH PORT: Gunakan port dari Railway atau default 3000
+  const port = process.env.PORT || 3000;
+  await app.listen(port);
 }
 bootstrap();
