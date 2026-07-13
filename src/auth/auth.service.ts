@@ -120,33 +120,36 @@ export class AuthService {
   }
 
   // 5. Logika Eksekusi Reset Sandi Baru
-  async resetPassword(body: any) {
-    const { token, newPassword } = body;
+  // server_side/src/auth/auth.service.ts
 
-    const user = await this.userRepository.findOne({ where: { resetPasswordToken: token } });
-    if (!user) {
-      throw new BadRequestException('Tautan tidak valid atau telah digunakan.');
-    }
+async resetPassword(body: any) {
+  const { token, newPassword } = body;
 
-    // Cek kedaluwarsa token
-    const now = new Date();
-    const expiry = new Date(user.resetPasswordExpires);
-    if (expiry.getTime() < now.getTime()) {
-      throw new BadRequestException('Tautan reset sandi telah kedaluwarsa.');
-    }
-
-    // Simpan sandi baru
-    user.password = await bcrypt.hash(newPassword, 10);
-    user.resetPasswordToken = null;
-    user.resetPasswordExpires = null;
-    await this.userRepository.save(user);
-
-    return { message: 'Kata sandi Anda berhasil diperbarui. Silakan login kembali.' };
+  const user = await this.userRepository.findOne({ where: { resetPasswordToken: token } });
+  if (!user) {
+    throw new BadRequestException('Tautan tidak valid atau telah digunakan.');
   }
 
-  async getProfile(userId: number) {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) throw new UnauthorizedException();
-    return { id: user.id, namaGereja: user.namaGereja, namaAdmin: user.namaAdmin, email: user.email };
+  // 🚀 PERBAIKAN: Cek apakah resetPasswordExpires bernilai null
+  if (!user.resetPasswordExpires) {
+    throw new BadRequestException('Tautan tidak valid atau telah kedaluwarsa.');
   }
+
+  // Setelah dicek di atas, TypeScript tahu bahwa user.resetPasswordExpires pasti berupa 'Date' (bukan null)
+  const now = new Date();
+  const expiry = new Date(user.resetPasswordExpires); 
+  
+  if (expiry.getTime() < now.getTime()) {
+    throw new BadRequestException('Tautan reset sandi telah kedaluwarsa.');
+  }
+
+  // Simpan sandi baru
+  user.password = await bcrypt.hash(newPassword, 10);
+  user.resetPasswordToken = null;
+  user.resetPasswordExpires = null;
+  await this.userRepository.save(user);
+
+  return { message: 'Kata sandi Anda berhasil diperbarui. Silakan login kembali.' };
+}
+
 }
