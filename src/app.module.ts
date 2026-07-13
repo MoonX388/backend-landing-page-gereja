@@ -5,6 +5,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { User } from './users/users.entity';
 import { AuthController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
+import { EmailService } from './auth/email.service';
 
 @Module({
   imports: [
@@ -29,6 +30,9 @@ import { AuthService } from './auth/auth.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService],
+  providers: [
+    AuthService,
+    EmailService, // 🚀 Wajib tambahkan di sini jika mengelola provider secara global
+  ],
 })
 export class AppModule {}
