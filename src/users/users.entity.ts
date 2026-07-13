@@ -18,16 +18,16 @@ export class User {
   @Column()
   password: string;
 
-  // 🚀 Tambahkan kolom tracking autentikasi di bawah ini:
   @Column({ default: false })
   isVerified: boolean;
 
+  // 🚀 PERBAIKAN: Wajib tambahkan | null agar bisa dikosongkan setelah dipakai
   @Column({ nullable: true })
-  verificationToken: string;
+  verificationToken: string | null; 
 
   @Column({ nullable: true })
-  resetPasswordToken: string;
+  resetPasswordToken: string | null;
 
-  @Column({ nullable: true, type: 'simple-json' }) // Fleksibel untuk SQLite
-  resetPasswordExpires: Date;
+  @Column({ nullable: true, type: 'simple-json' })
+  resetPasswordExpires: Date | null;
 }
