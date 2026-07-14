@@ -10,17 +10,18 @@ export class EmailService {
     this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'mail.gerejapintar.id',
       port: parseInt(process.env.SMTP_PORT || '465', 10),
-      secure: true, // 🚀 WAJIB true untuk Port 465 sesuai petunjuk cPanel
+      secure: true, 
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
-      // Mengantisipasi jika sertifikat SSL lokal mail server menolak ketukan domain luar
       tls: {
         rejectUnauthorized: false,
       },
     });
-this.transporter.verify((error, success) => {
+
+    // 🚀 KUNCI DETEKTIF: Cek koneksi SMTP langsung saat aplikasi menyala
+    this.transporter.verify((error, success) => {
       if (error) {
         console.error('❌ KONEKSI SMTP GAGAL SAAT BOOTING:', error.message);
       } else {
