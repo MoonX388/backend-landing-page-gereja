@@ -8,12 +8,16 @@ export class EmailService {
 
   constructor() {
     this.transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      host: process.env.SMTP_HOST || 'mail.gerejapintar.id',
       port: parseInt(process.env.SMTP_PORT || '465', 10),
-      secure: true, // true untuk port 465
+      secure: true, // 🚀 WAJIB true untuk Port 465 sesuai petunjuk cPanel
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
+      },
+      // Mengantisipasi jika sertifikat SSL lokal mail server menolak ketukan domain luar
+      tls: {
+        rejectUnauthorized: false,
       },
     });
   }
