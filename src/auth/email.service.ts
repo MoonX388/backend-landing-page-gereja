@@ -20,6 +20,14 @@ export class EmailService {
         rejectUnauthorized: false,
       },
     });
+this.transporter.verify((error, success) => {
+      if (error) {
+        console.error('❌ KONEKSI SMTP GAGAL SAAT BOOTING:', error.message);
+      } else {
+        console.log('✅ SERVER SMTP SIAP MENGIRIM EMAIL DARI RAILWAY!');
+      }
+    });
+  }
   }
 
   async sendVerificationEmail(to: string, token: string) {
