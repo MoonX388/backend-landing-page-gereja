@@ -17,10 +17,11 @@ export class AuthService {
     private emailService: EmailService, // 🚀 Inject email service
   ) {}
 
-  // 1. Logika Register + Kirim Email Verifikasi
+  // 1. Logika Register + Kirim Email Verifikasi (Mode Background & Tracking)
   async register(body: any) {
     const { namaGereja, namaAdmin, email, password } = body;
 
+    // Cek apakah email sudah terdaftar
     const userExists = await this.userRepository.findOne({ where: { email } });
     if (userExists) {
       throw new BadRequestException('Email ini sudah terdaftar!');
@@ -38,17 +39,21 @@ export class AuthService {
       verificationToken: vToken,
     });
 
+    // Simpan data ke PostgreSQL
     await this.userRepository.save(newUser);
+    console.log(`[AuthService] Sukses menyimpan user baru ke database. Email: ${email}`);
 
-    // Kirim email asli secara background async
-    try {
-      await this.emailService.sendVerificationEmail(email, vToken);
-    } catch (err) {
-      console.error('Gagal mengirim email verifikasi:', err);
-      // Tetap lanjutkan registrasi berhasil, tapi beri log kegagalan email server
-    }
+    // 🚀 PERBAIKAN: Lepas 'await' agar pengiriman email tidak mem-block respon frontend
+    console.log(`[AuthService] Memicu antrean kirim email verifikasi untuk: ${email}`);
+    this.emailService.sendVerificationEmail(email, vToken).catch((err) => {
+      // Jika server email gagal merespon, eror ditangkap di sini dan tercatat di Railway
+      console.error('❌ [BACKGROUND EMAIL CRASH] Gagal mengirim email verifikasi:', err.message);
+    });
 
-    return { message: 'Registrasi berhasil! Silakan periksa kotak masuk email Anda untuk melakukan verifikasi.' };
+    // Langsung kembalikan respon sukses ke client (tanpa menunggu email selesai dikirim)
+    return { 
+      message: 'Registrasi berhasil! Silakan periksa kotak masuk atau folder spam email Anda untuk melakukan verifikasi.' 
+    };
   }
 
   // 2. Logika Verifikasi Email
@@ -62,6 +67,7 @@ export class AuthService {
     user.verificationToken = null; // Hapus token setelah terpakai
     await this.userRepository.save(user);
 
+    console.log(`[AuthService] Akun berhasil diverifikasi. Email: ${user.email}`);
     return { message: 'Email berhasil diverifikasi! Sekarang Anda bisa login.' };
   }
 
@@ -84,7 +90,10 @@ export class AuthService {
       throw new UnauthorizedException('Email atau kata sandi salah.');
     }
 
+    // Buat token JWT payload
     const payload = { id: user.id, email: user.email };
+    
+    console.log(`[AuthService] User "${user.email}" sukses melakukan login.`);
     return {
       token: this.jwtService.sign(payload),
       user: {
@@ -96,11 +105,11 @@ export class AuthService {
     };
   }
 
-  // 4. Logika Minta Link Lupa Sandi
+  // 4. Logika Minta Link Lupa Sandi (Mode Background & Tracking)
   async forgotPassword(email: string) {
     const user = await this.userRepository.findOne({ where: { email } });
     if (!user) {
-      // Demi keamanan SaaS, disarankan tidak membocorkan email terdaftar/tidak.
+      // Demi keamanan SaaS, disarankan tidak membocorkan email terdaftar/tidak ke publik.
       return { message: 'Jika email terdaftar, instruksi reset sandi telah dikirim.' };
     }
 
@@ -109,12 +118,13 @@ export class AuthService {
     user.resetPasswordExpires = new Date(Date.now() + 3600000); // Masa berlaku 1 Jam
 
     await this.userRepository.save(user);
+    console.log(`[AuthService] Token reset sandi berhasil dibuat untuk: ${email}`);
 
-    try {
-      await this.emailService.sendResetPasswordEmail(email, resetToken);
-    } catch (err) {
-      console.error('Gagal mengirim email lupa sandi:', err);
-    }
+    // 🚀 PERBAIKAN: Lepas 'await' agar pengiriman email lupa sandi berjalan secara async di background
+    console.log(`[AuthService] Memicu antrean kirim email lupa sandi untuk: ${email}`);
+    this.emailService.sendResetPasswordEmail(email, resetToken).catch((err) => {
+      console.error('❌ [BACKGROUND EMAIL CRASH] Gagal mengirim email lupa sandi:', err.message);
+    });
 
     return { message: 'Tautan reset sandi berhasil dikirim ke email Anda.' };
   }
@@ -128,35 +138,35 @@ export class AuthService {
       throw new BadRequestException('Tautan tidak valid atau telah digunakan.');
     }
 
-    // 🚀 PERBAIKAN: Cek apakah resetPasswordExpires bernilai null
+    // Cek apakah resetPasswordExpires bernilai null
     if (!user.resetPasswordExpires) {
       throw new BadRequestException('Tautan tidak valid atau telah kedaluwarsa.');
     }
 
-    // Setelah dicek di atas, TypeScript tahu bahwa user.resetPasswordExpires pasti berupa 'Date' (bukan null)
     const now = new Date();
     const expiry = new Date(user.resetPasswordExpires); 
-    
+
     if (expiry.getTime() < now.getTime()) {
       throw new BadRequestException('Tautan reset sandi telah kedaluwarsa.');
     }
 
-    // Simpan sandi baru
+    // Simpan sandi baru yang telah di-hash
     user.password = await bcrypt.hash(newPassword, 10);
     user.resetPasswordToken = null;
     user.resetPasswordExpires = null;
     await this.userRepository.save(user);
 
+    console.log(`[AuthService] Kata sandi berhasil diperbarui untuk user ID: ${user.id}`);
     return { message: 'Kata sandi Anda berhasil diperbarui. Silakan login kembali.' };
   }
 
-  // 🚀 6. FUNGSI PELENGKAP: Ambil data profil berdasarkan Token JWT
+  // 6. FUNGSI PELENGKAP: Ambil data profil berdasarkan Token JWT
   async getProfile(userId: number) {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new UnauthorizedException('Pengguna tidak ditemukan');
     }
-    
+
     return {
       id: user.id,
       namaGereja: user.namaGereja,
