@@ -63,7 +63,6 @@ export class EmailService {
       throw error;
     }
   }
-}
 
   async sendResetPasswordEmail(to: string, token: string) {
     const url = `${process.env.FRONTEND_URL}/reset-pwd?token=${token}`;
