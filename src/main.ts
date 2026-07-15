@@ -28,7 +28,7 @@ async function bootstrap() {
 
   // 2. PERBAIKAN PORT & HOST BINDING: Wajib tambahkan '0.0.0.0' untuk Railway!
   const port = process.env.PORT || 8080;
-  await app.listen(port);
+  await app.listen(port, process.env.FRONTEND_URL || '0.0.0.0');
   
   console.log(`Application is successfully running on port: ${port}`);
 }
