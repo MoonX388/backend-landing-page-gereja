@@ -13,8 +13,8 @@ async function bootstrap() {
       // Atau lokal testing di laptop (localhost)
       if (
         !origin || 
-        origin === process.env.FRONTEND_URL || 
-        origin.endsWith('.' + process.env.FRONTEND_URL) || 
+        origin === 'https://www.gerejapintar.id' || 
+        origin.endsWith('.gerejapintar.id') ||
         origin.includes('localhost:')
       ) {
         callback(null, true);
