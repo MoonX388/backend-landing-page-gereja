@@ -75,22 +75,41 @@ export class AuthService {
   async login(body: any) {
     const { username, password } = body;
 
+    // 1. Cari user berdasarkan email/username
     const user = await this.userRepository.findOne({ where: { email: username } });
     if (!user) {
       throw new UnauthorizedException('Email atau kata sandi salah.');
     }
 
-    // 🛡️ CEK VERIFIKASI EMAIL
+    // 🛡️ [FITUR BARU]: CEK VERIFIKASI EMAIL + KIRIM ULANG TOKEN BARU OTOMATIS
     if (!user.isVerified) {
-      throw new BadRequestException('Akun Anda belum diverifikasi. Silakan cek email Anda terlebih dahulu.');
+      // A. Generate token verifikasi baru yang sepenuhnya berbeda
+      const newVToken = crypto.randomBytes(32).toString('hex'); 
+      
+      // B. Timpa token lama di database dengan token baru ini
+      user.verificationToken = newVToken;
+      await this.userRepository.save(user);
+
+      console.log(`[AuthService] User "${user.email}" belum verifikasi. Memicu pengiriman token baru.`);
+
+      // C. Kirim ulang email verifikasi di background menggunakan token baru
+      this.emailService.sendVerificationEmail(user.email, newVToken).catch((err) => {
+        console.error('❌ [BACKGROUND RESEND EMAIL CRASH] Gagal mengirim ulang email:', err.message);
+      });
+
+      // D. Lemparkan error dengan pesan baru agar frontend memberi tahu user
+      throw new BadRequestException(
+        'Akun Anda belum diverifikasi. Tautan verifikasi baru yang berbeda telah otomatis dikirim kembali ke email Anda. Silakan cek folder kotak masuk atau spam!'
+      );
     }
 
+    // 2. Jika sudah terverifikasi, lanjutkan cek password
     const isPasswordMatch = await bcrypt.compare(password, user.password);
     if (!isPasswordMatch) {
       throw new UnauthorizedException('Email atau kata sandi salah.');
     }
 
-    // Buat token JWT payload
+    // 3. Buat token JWT payload untuk sesi login
     const payload = { id: user.id, email: user.email };
     
     console.log(`[AuthService] User "${user.email}" sukses melakukan login.`);

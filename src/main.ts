@@ -13,8 +13,8 @@ async function bootstrap() {
       // Atau lokal testing di laptop (localhost)
       if (
         !origin || 
-        origin === 'https://gerejapintar.id' || 
-        origin.endsWith('.gerejapintar.id') || 
+        origin === process.env.FRONTEND_URL || 
+        origin.endsWith('.' + process.env.FRONTEND_URL) || 
         origin.includes('localhost:')
       ) {
         callback(null, true);
@@ -28,7 +28,7 @@ async function bootstrap() {
 
   // 2. PERBAIKAN PORT & HOST BINDING: Wajib tambahkan '0.0.0.0' untuk Railway!
   const port = process.env.PORT || 8080;
-  await app.listen(port, '0.0.0.0');
+  await app.listen(port);
   
   console.log(`Application is successfully running on port: ${port}`);
 }

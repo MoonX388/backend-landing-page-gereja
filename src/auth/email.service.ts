@@ -33,6 +33,7 @@ export class EmailService {
     });
   }
 
+
   async sendVerificationEmail(to: string, token: string) {
     const baseUrl = process.env.FRONTEND_URL || 'https://gerejapintar.id';
     const url = `${baseUrl}/verify-email?token=${token}`;

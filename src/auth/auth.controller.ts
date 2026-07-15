@@ -6,8 +6,9 @@ import { JwtService } from '@nestjs/jwt';
 @Controller('auth')
 export class AuthController {
   constructor(
-    private authService: AuthService,
-    private jwtService: JwtService,
+    private readonly authService: AuthService,
+    // 🚀 TERSANGKA 1 FIXED: Wajib inject JwtService di dalam constructor controller!
+    private readonly jwtService: JwtService, 
   ) {}
 
   @Post('register')
@@ -39,14 +40,22 @@ export class AuthController {
   }
 
   @Get('me')
-  async getMe(@Headers('authorization') authHeader: string) {
-    if (!authHeader) throw new UnauthorizedException('Token tidak ditemukan');
-    try {
-      const token = authHeader.split(' ')[1];
-      const decoded = this.jwtService.verify(token);
-      return this.authService.getProfile(decoded.id);
-    } catch {
-      throw new UnauthorizedException('Sesi kadaluwarsa, silakan login kembali');
-    }
+async getMe(@Headers('authorization') authHeader: string) {
+  if (!authHeader) {
+    throw new UnauthorizedException('Token tidak ditemukan');
   }
+
+  try {
+    const token = authHeader.split(' ')[1];
+    
+    // 🚀 PERBAIKAN: Hapus objek { secret: ... } manual. 
+    // Bersihkan menjadi seperti di bawah ini agar memanfaatkan JwtModule Global!
+    const decoded = this.jwtService.verify(token); 
+    
+    return this.authService.getProfile(decoded.id);
+  } catch (err: any) {
+    console.error('❌ [JWT VERIFY ERROR] Detail alasan token ditolak:', err.message);
+    throw new UnauthorizedException('Sesi kadaluwarsa, silakan login kembali');
+  }
+}
 }
