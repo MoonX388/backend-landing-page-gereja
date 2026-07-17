@@ -1,196 +1,129 @@
-// server_side/src/auth/auth.service.ts
 import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { User } from '../users/users.entity';
+import { SupabaseService } from '../supabase/supabase.service';
 import { EmailService } from './email.service';
 
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectRepository(User)
-    private userRepository: Repository<User>,
+    private supabaseService: SupabaseService,
     private jwtService: JwtService,
-    private emailService: EmailService, // 🚀 Inject email service
+    private emailService: EmailService,
   ) {}
 
-  // 1. Logika Register + Kirim Email Verifikasi (Mode Background & Tracking)
   async register(body: any) {
     const { namaGereja, namaAdmin, email, password } = body;
+    const supabase = this.supabaseService.getClient();
 
-    // Cek apakah email sudah terdaftar
-    const userExists = await this.userRepository.findOne({ where: { email } });
-    if (userExists) {
-      throw new BadRequestException('Email ini sudah terdaftar!');
-    }
+    const subdomain = namaGereja.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
+    if (!subdomain || subdomain.length < 3) throw new BadRequestException('Nama gereja tidak valid untuk URL.');
+
+    const { data: subExists } = await supabase.from('users').select('subdomain').eq('subdomain', subdomain).single();
+    if (subExists) throw new BadRequestException('Subdomain sudah digunakan!');
+
+    const { data: userExists } = await supabase.from('users').select('email').eq('email', email).single();
+    if (userExists) throw new BadRequestException('Email sudah terdaftar!');
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const vToken = crypto.randomBytes(32).toString('hex'); // Token acak aman
+    const vToken = crypto.randomBytes(32).toString('hex');
 
-    const newUser = this.userRepository.create({
-      namaGereja,
-      namaAdmin,
-      email,
-      password: hashedPassword,
-      isVerified: false,
-      verificationToken: vToken,
-    });
+    const { error } = await supabase.from('users').insert([{ namaGereja, namaAdmin, email, password: hashedPassword, isVerified: false, verificationToken: vToken, subdomain }]);
+    if (error) throw new BadRequestException('Gagal mendaftarkan akun.');
 
-    // Simpan data ke PostgreSQL
-    await this.userRepository.save(newUser);
-    console.log(`[AuthService] Sukses menyimpan user baru ke database. Email: ${email}`);
-
-    // 🚀 PERBAIKAN: Lepas 'await' agar pengiriman email tidak mem-block respon frontend
-    console.log(`[AuthService] Memicu antrean kirim email verifikasi untuk: ${email}`);
-    this.emailService.sendVerificationEmail(email, vToken).catch((err) => {
-      // Jika server email gagal merespon, eror ditangkap di sini dan tercatat di Railway
-      console.error('❌ [BACKGROUND EMAIL CRASH] Gagal mengirim email verifikasi:', err.message);
-    });
-
-    // Langsung kembalikan respon sukses ke client (tanpa menunggu email selesai dikirim)
-    return { 
-      message: 'Registrasi berhasil! Silakan periksa kotak masuk atau folder spam email Anda untuk melakukan verifikasi.' 
-    };
+    this.emailService.sendVerificationEmail(email, vToken).catch(err => console.error(err));
+    return { message: 'Registrasi berhasil!', subdomainFull: `${subdomain}.gerejapintar.id` };
   }
 
-  // 2. Logika Verifikasi Email
   async verifyEmail(token: string) {
-    const user = await this.userRepository.findOne({ where: { verificationToken: token } });
-    if (!user) {
-      throw new BadRequestException('Tautan verifikasi tidak valid atau telah kedaluwarsa.');
-    }
+    const supabase = this.supabaseService.getClient();
+    const { data: user, error } = await supabase.from('users').select('*').eq('verificationToken', token).single();
+    if (error || !user) throw new BadRequestException('Tautan tidak valid.');
 
-    user.isVerified = true;
-    user.verificationToken = null; // Hapus token setelah terpakai
-    await this.userRepository.save(user);
-
-    console.log(`[AuthService] Akun berhasil diverifikasi. Email: ${user.email}`);
-    return { message: 'Email berhasil diverifikasi! Sekarang Anda bisa login.' };
+    await supabase.from('users').update({ isVerified: true, verificationToken: null }).eq('id', user.id);
+    return { message: 'Email berhasil diverifikasi!' };
   }
 
-  // 3. Logika Login + Proteksi Verifikasi
   async login(body: any) {
     const { username, password } = body;
+    const supabase = this.supabaseService.getClient();
 
-    // 1. Cari user berdasarkan email/username
-    const user = await this.userRepository.findOne({ where: { email: username } });
-    if (!user) {
-      throw new UnauthorizedException('Email atau kata sandi salah.');
-    }
+    const { data: user, error } = await supabase.from('users').select('*').eq('email', username).single();
+    if (error || !user) throw new UnauthorizedException('Email atau kata sandi salah.');
 
-    // 🛡️ [FITUR BARU]: CEK VERIFIKASI EMAIL + KIRIM ULANG TOKEN BARU OTOMATIS
     if (!user.isVerified) {
-      // A. Generate token verifikasi baru yang sepenuhnya berbeda
-      const newVToken = crypto.randomBytes(32).toString('hex'); 
-      
-      // B. Timpa token lama di database dengan token baru ini
-      user.verificationToken = newVToken;
-      await this.userRepository.save(user);
-
-      console.log(`[AuthService] User "${user.email}" belum verifikasi. Memicu pengiriman token baru.`);
-
-      // C. Kirim ulang email verifikasi di background menggunakan token baru
-      this.emailService.sendVerificationEmail(user.email, newVToken).catch((err) => {
-        console.error('❌ [BACKGROUND RESEND EMAIL CRASH] Gagal mengirim ulang email:', err.message);
-      });
-
-      // D. Lemparkan error dengan pesan baru agar frontend memberi tahu user
-      throw new BadRequestException(
-        'Akun Anda belum diverifikasi. Tautan verifikasi baru yang berbeda telah otomatis dikirim kembali ke email Anda. Silakan cek folder kotak masuk atau spam!'
-      );
+      const newVToken = crypto.randomBytes(32).toString('hex');
+      await supabase.from('users').update({ verificationToken: newVToken }).eq('id', user.id);
+      this.emailService.sendVerificationEmail(user.email, newVToken).catch(err => console.error(err));
+      throw new BadRequestException('Akun belum diverifikasi. Tautan baru telah dikirim.');
     }
 
-    // 2. Jika sudah terverifikasi, lanjutkan cek password
     const isPasswordMatch = await bcrypt.compare(password, user.password);
-    if (!isPasswordMatch) {
-      throw new UnauthorizedException('Email atau kata sandi salah.');
-    }
+    if (!isPasswordMatch) throw new UnauthorizedException('Email atau kata sandi salah.');
 
-    // 3. Buat token JWT payload untuk sesi login
     const payload = { id: user.id, email: user.email };
-    
-    console.log(`[AuthService] User "${user.email}" sukses melakukan login.`);
     return {
       token: this.jwtService.sign(payload),
-      user: {
-        id: user.id,
-        namaGereja: user.namaGereja,
-        namaAdmin: user.namaAdmin,
-        email: user.email,
-      },
+      user: { id: user.id, namaGereja: user.namaGereja, namaAdmin: user.namaAdmin, email: user.email },
     };
   }
 
-  // 4. Logika Minta Link Lupa Sandi (Mode Background & Tracking)
   async forgotPassword(email: string) {
-    const user = await this.userRepository.findOne({ where: { email } });
-    if (!user) {
-      // Demi keamanan SaaS, disarankan tidak membocorkan email terdaftar/tidak ke publik.
-      return { message: 'Jika email terdaftar, instruksi reset sandi telah dikirim.' };
-    }
+    const supabase = this.supabaseService.getClient();
+    const { data: user } = await supabase.from('users').select('*').eq('email', email).single();
+    if (!user) return { message: 'Instruksi reset sandi telah dikirim jika terdaftar.' };
 
     const resetToken = crypto.randomBytes(32).toString('hex');
-    user.resetPasswordToken = resetToken;
-    user.resetPasswordExpires = new Date(Date.now() + 3600000); // Masa berlaku 1 Jam
+    const expires = new Date(Date.now() + 3600000).toISOString(); 
 
-    await this.userRepository.save(user);
-    console.log(`[AuthService] Token reset sandi berhasil dibuat untuk: ${email}`);
-
-    // 🚀 PERBAIKAN: Lepas 'await' agar pengiriman email lupa sandi berjalan secara async di background
-    console.log(`[AuthService] Memicu antrean kirim email lupa sandi untuk: ${email}`);
-    this.emailService.sendResetPasswordEmail(email, resetToken).catch((err) => {
-      console.error('❌ [BACKGROUND EMAIL CRASH] Gagal mengirim email lupa sandi:', err.message);
-    });
-
-    return { message: 'Tautan reset sandi berhasil dikirim ke email Anda.' };
+    await supabase.from('users').update({ resetPasswordToken: resetToken, resetPasswordExpires: expires }).eq('id', user.id);
+    this.emailService.sendResetPasswordEmail(email, resetToken).catch(err => console.error(err));
+    return { message: 'Tautan reset sandi berhasil dikirim.' };
   }
 
-  // 5. Logika Eksekusi Reset Sandi Baru
   async resetPassword(body: any) {
     const { token, newPassword } = body;
+    const supabase = this.supabaseService.getClient();
 
-    const user = await this.userRepository.findOne({ where: { resetPasswordToken: token } });
-    if (!user) {
-      throw new BadRequestException('Tautan tidak valid atau telah digunakan.');
-    }
+    const { data: user, error } = await supabase.from('users').select('*').eq('resetPasswordToken', token).single();
+    if (error || !user || !user.resetPasswordExpires) throw new BadRequestException('Tautan tidak valid.');
+    if (new Date(user.resetPasswordExpires).getTime() < Date.now()) throw new BadRequestException('Tautan kedaluwarsa.');
 
-    // Cek apakah resetPasswordExpires bernilai null
-    if (!user.resetPasswordExpires) {
-      throw new BadRequestException('Tautan tidak valid atau telah kedaluwarsa.');
-    }
-
-    const now = new Date();
-    const expiry = new Date(user.resetPasswordExpires); 
-
-    if (expiry.getTime() < now.getTime()) {
-      throw new BadRequestException('Tautan reset sandi telah kedaluwarsa.');
-    }
-
-    // Simpan sandi baru yang telah di-hash
-    user.password = await bcrypt.hash(newPassword, 10);
-    user.resetPasswordToken = null;
-    user.resetPasswordExpires = null;
-    await this.userRepository.save(user);
-
-    console.log(`[AuthService] Kata sandi berhasil diperbarui untuk user ID: ${user.id}`);
-    return { message: 'Kata sandi Anda berhasil diperbarui. Silakan login kembali.' };
+    const newHashedPassword = await bcrypt.hash(newPassword, 10);
+    await supabase.from('users').update({ password: newHashedPassword, resetPasswordToken: null, resetPasswordExpires: null }).eq('id', user.id);
+    return { message: 'Kata sandi berhasil diperbarui.' };
   }
 
-  // 6. FUNGSI PELENGKAP: Ambil data profil berdasarkan Token JWT
-  async getProfile(userId: number) {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) {
-      throw new UnauthorizedException('Pengguna tidak ditemukan');
-    }
+  async checkSubdomainValid(subdomain: string) {
+    const supabase = this.supabaseService.getClient();
+    const { data, error } = await supabase.from('users').select('subdomain, namaGereja').eq('subdomain', subdomain).single();
+    if (error || !data) return { valid: false, namaGereja: null };
+    return { valid: true, namaGereja: data.namaGereja };
+  }
 
-    return {
-      id: user.id,
-      namaGereja: user.namaGereja,
-      namaAdmin: user.namaAdmin,
-      email: user.email,
-    };
+  async getAllPublicChurches() {
+    const supabase = this.supabaseService.getClient();
+    const { data, error } = await supabase.from('users').select('id, namaGereja, subdomain').order('namaGereja', { ascending: true });
+    if (error) throw new BadRequestException('Gagal memuat direktori.');
+    return data;
+  }
+
+  // 🚀 AMBIL SEMUA DATA DETAIL UNTUK MASTER HUB
+  async getAllChurchesForMaster() {
+    const supabase = this.supabaseService.getClient();
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, namaGereja, namaAdmin, email, subdomain, isVerified')
+      .order('id', { ascending: false });
+    if (error) throw new BadRequestException('Gagal mengambil data master.');
+    return data;
+  }
+
+  async getProfile(userId: number) {
+    const supabase = this.supabaseService.getClient();
+    const { data: user, error } = await supabase.from('users').select('id, namaGereja, namaAdmin, email').eq('id', userId).single();
+    if (error || !user) throw new UnauthorizedException('Pengguna tidak ditemukan');
+    return user;
   }
 }
